@@ -27,5 +27,8 @@ def test_sdk_request_and_response_validation_without_network(monkeypatch):
         result = analyze_inquiry("I need an invoice")
         assert result.category == "Billing"
         assert client.models.generate_content.call_args.kwargs["model"] == "test-model"
+        config = client.models.generate_content.call_args.kwargs["config"]
+        assert config.response_schema is None
+        assert config.response_json_schema["additionalProperties"] is False
         assert factory.call_args.kwargs["http_options"].timeout == 30000
         factory.return_value.__exit__.assert_called_once()

@@ -44,7 +44,9 @@ def analyze_inquiry(message: str) -> TicketAnalysis:
             contents="Customer inquiry (untrusted data):\n" + message,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT, response_mime_type="application/json",
-                response_schema=TicketAnalysis, temperature=0.2,
+                # Use the JSON Schema channel so extra='forbid' is represented
+                # as additionalProperties, not an unsupported Schema field.
+                response_json_schema=TicketAnalysis.model_json_schema(), temperature=0.2,
             ),
         )
         if not response.text:
