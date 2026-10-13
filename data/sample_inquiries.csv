@@ -1,0 +1,7 @@
+id,received_at,customer_name,message,status,category,priority,summary,draft_reply,final_reply,reviewed_at,error_message
+T001,2026-10-13T09:00:00,Amal,"I paid for the software yesterday but cannot activate it. We need access today.",NEW,,,,,,,
+T002,2026-10-13T09:05:00,Nimali,"Do you provide a discount for five team licenses?",NEW,,,,,,,
+T003,2026-10-13T09:10:00,Kasun,"Could you send me an invoice for last month's subscription?",NEW,,,,,,,
+T004,2026-10-13T09:20:00,Sara,"How can I change the language in my account settings?",NEW,,,,,,,
+T005,2026-10-13T09:30:00,David,"The reporting dashboard fails to load and displays an error.",NEW,,,,,,,
+T006,2026-10-13T09:40:00,Maya,"Is there a trial available before we purchase a team license?",NEW,,,,,,,
