@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
-from models.ticket import FIELDS, validate_rows
+from models.ticket import FIELDS, LEGACY_FIELDS, validate_rows
 from services.config import ConfigurationError, ROOT, project_path
 
 
@@ -14,7 +14,7 @@ class Repository(Protocol):
 
 
 def apply_changes(rows, ticket_id, changes, expected_status):
-    if set(changes) - (set(FIELDS) - {"id", "received_at", "customer_name", "message"}):
+    if set(changes) - (set(FIELDS) - {"id", "received_at", "customer_name", "customer_email", "message"}):
         raise ValueError("Updates may only change workflow fields")
     matches = [row for row in rows if row["id"] == ticket_id]
     if len(matches) != 1:
@@ -35,9 +35,13 @@ class CsvRepository:
     def load(self):
         with self.path.open(encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
-            if reader.fieldnames != FIELDS:
-                raise ValueError("CSV headers must match the expected 12 columns in order")
-            return validate_rows(list(reader))
+            if reader.fieldnames not in (FIELDS, LEGACY_FIELDS):
+                raise ValueError(f"CSV headers must match the expected {len(FIELDS)} columns in order")
+            rows = list(reader)
+            if reader.fieldnames == LEGACY_FIELDS:
+                for row in rows:
+                    row.update(email_status="", emailed_at="")
+            return validate_rows(rows)
 
     def update(self, ticket_id, changes, *, expected_status):
         rows = self.load()

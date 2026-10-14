@@ -6,7 +6,7 @@
 4. Repeat the command. Show zero new drafts and six skipped records.
 5. Open the dashboard in Offline demo mode. Inspect suggested category, priority, summary, and original message.
 6. Edit a draft. Approve it. Filter to APPROVED and show the saved edited response and review timestamp.
-7. Explain that approval records review and sends no email.
+7. Explain that Offline demo records approval without email; live approval sends the reviewed reply through configured Gmail SMTP. See email_setup.md.
 
 For a real AI demonstration, configure Gemini, run `main.py` without `--demo`, disable Offline demo in the dashboard, and describe the live model used. Claim Google Sheets integration has been verified only after completing its live checklist.
 

@@ -45,11 +45,11 @@ def initialize(repository, service):
     ).execute()
     samples = CsvRepository(ROOT / "data/sample_inquiries.csv").load()
     repository.values.update(
-        spreadsheetId=repository.sheet_id, range="Inquiries!A1:L7", valueInputOption="RAW",
+        spreadsheetId=repository.sheet_id, range="Inquiries!A1:O7", valueInputOption="RAW",
         body={"values": [FIELDS, *[[row[field] for field in FIELDS] for row in samples]]},
     ).execute()
     header_range = {"sheetId": properties["sheetId"], "startRowIndex": 0,
-                    "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 12}
+                    "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": len(FIELDS)}
     service.spreadsheets().batchUpdate(
         spreadsheetId=repository.sheet_id,
         body={"requests": [
@@ -57,11 +57,11 @@ def initialize(repository, service):
                             "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
                             "fields": "userEnteredFormat.textFormat.bold"}},
             {"autoResizeDimensions": {"dimensions": {"sheetId": properties["sheetId"],
-                                                       "dimension": "COLUMNS", "startIndex": 0, "endIndex": 12}}},
+                                                       "dimension": "COLUMNS", "startIndex": 0, "endIndex": len(FIELDS)}}},
         ]},
     ).execute()
     assert len(repository.load()) == 6
-    print("Initialized Inquiries with 12 headers and 6 synthetic NEW tickets.")
+    print(f"Initialized Inquiries with {len(FIELDS)} headers and 6 synthetic NEW tickets.")
 
 
 def main():

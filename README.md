@@ -1,6 +1,6 @@
 # AI Customer Support Automation Assistant
 
-A Python application that triages support inquiries and creates response drafts for human review. It uses Gemini structured output, Pydantic validation, CSV storage, a Streamlit dashboard, and an optional Google Sheets adapter. Approval saves a reviewed response; it never sends email.
+A Python application that triages support inquiries and creates response drafts for human review. It uses Gemini structured output, Pydantic validation, CSV storage, a Streamlit dashboard, and an optional Google Sheets adapter. Human approval saves the reviewed response and sends it through Gmail SMTP when configured. Offline demo never sends email. See [email setup](docs/email_setup.md) for Google Form, Apps Script, Sheet headers, and Gmail configuration.
 
 ## What is this project for?
 
@@ -12,7 +12,7 @@ This is also an internship portfolio project demonstrating Python, API integrati
 
 ## Workflow and features
 
-CSV or Google Sheets → select NEW tickets → Gemini analysis → Pydantic validation → save draft → Streamlit review → save approved response.
+Google Form / CSV / Google Sheets → select NEW tickets → Gemini analysis → Pydantic validation → save draft → Streamlit review → save approved response → Gmail SMTP.
 
 The lifecycle is `NEW → DRAFTED → APPROVED`. Failed analyses become `ERROR`. After resolving the cause, a reviewer explicitly resets an ERROR ticket to NEW. Drafted and approved records are skipped on later runs.
 
@@ -61,7 +61,7 @@ To process NEW tickets in the configured source (currently Sheets), run:
 .\.venv\Scripts\python.exe main.py --limit 6
 ```
 
-Open [the dashboard](http://127.0.0.1:8501), turn **Offline demo off**, and select a drafted inquiry. Review the original message and analysis, edit the reply, and click **Approve reviewed reply**. This saves `final_reply` and a UTC `reviewed_at` timestamp without sending a message.
+Open [the dashboard](http://127.0.0.1:8501), turn **Offline demo off**, and select a drafted inquiry. Review the original message and analysis, edit the reply, and click **Approve reviewed reply**. This saves `final_reply` and a UTC `reviewed_at` timestamp, then attempts email when Gmail is configured. Delivery status and manual retries appear in the approved-ticket view. Complete [email setup](docs/email_setup.md) first, including the two new Sheet headers.
 
 ## Setup on another computer
 
@@ -114,6 +114,9 @@ The SDK request follows the [official Google Gen AI Python SDK](https://googleap
 | `GOOGLE_SHEET_ID` | Spreadsheet ID for Sheets mode |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | Credential JSON path; default `credentials/service-account.json` |
 | `DEMO_MODE` | `true` disables processing, approval, and retry |
+| `SMTP_HOST`, `SMTP_PORT` | Gmail SMTP host and STARTTLS port; smtp.gmail.com / 587 |
+| `SMTP_USER`, `SMTP_PASSWORD` | Sender Gmail address and Google App Password |
+| `SMTP_FROM` | Sender display name and mailbox; defaults to SMTP_USER |
 
 Restart the dashboard after editing `.env`. Environment variables set outside the application take precedence over the file.
 
@@ -121,7 +124,7 @@ Restart the dashboard after editing `.env`. Environment variables set outside th
 
 1. Enable the Sheets API in your Google Cloud project.
 2. Create a service account and, if your organization allows it, save its credential JSON as `credentials/service-account.json`.
-3. Create an `Inquiries` tab. Import `data/sample_inquiries.csv` with its exact twelve headers.
+3. Create an `Inquiries` tab. Import `data/sample_inquiries.csv` with its exact fifteen headers. For an existing 13-column Sheet, add `email_status` in N1 and `emailed_at` in O1.
 4. Share only this synthetic demo spreadsheet with the service account as Editor.
 5. Set `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE`, and `DATA_SOURCE=sheets` in `.env`.
 6. Run the live processor and review the same data with offline mode disabled.
@@ -169,6 +172,8 @@ The expanded checks also reject malformed CSV rows/headers and missing IDs, and 
 | `services/storage.py` | CSV repository and source selection |
 | `services/sheets_service.py` | Google Sheets repository |
 | `services/config.py` | Configuration and read-only guard |
+| `services/email_service.py` | Gmail SMTP with verified STARTTLS |
+| `google_apps_script.js` | Google Form submission intake into Inquiries |
 | `scripts/verify_sheets.py` | Guarded initialization and live workflow verification |
 | `data/sample_inquiries.csv` | Six fictional seed inquiries |
 | `tests/` | Workflow, validation, API, and dashboard checks |

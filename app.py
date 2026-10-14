@@ -4,11 +4,11 @@ from models.ticket import CATEGORIES, PRIORITIES, STATUSES
 from services.ai_service import analyze_inquiry, analyze_offline, require_gemini_config
 from services.config import ConfigurationError, read_only
 from services.storage import get_repository
-from services.ticket_service import approve_ticket, process_new, retry_ticket
+from services.ticket_service import approve_ticket, process_new, retry_ticket, send_approved_email
 
 st.set_page_config(page_title="Support Review", page_icon="💬", layout="wide")
 st.title("Support Review")
-st.caption("AI-assisted triage and response drafts · Human approval required · No messages are sent")
+st.caption("AI-assisted triage and response drafts · Human approval required · Approved replies are emailed")
 
 
 def display_error(exc):
@@ -20,7 +20,7 @@ with st.sidebar:
     st.subheader("Workspace")
     offline = st.toggle("Offline demo", value=True)
     if offline:
-        st.info("Uses deterministic examples, not AI. Demo records are stored separately.")
+        st.info("Uses deterministic examples, not AI. Demo records are stored separately. Emails are never sent in this mode.")
     else:
         st.caption("Uses the configured CSV or Google Sheet and your Gemini account.")
     limit = st.number_input("Tickets per batch", min_value=1, max_value=100, value=6)
@@ -47,7 +47,7 @@ except Exception as exc:
     st.stop()
 
 if "notice" in st.session_state:
-    st.success(st.session_state.pop("notice"))
+    st.info(st.session_state.pop("notice"))
 
 columns = st.columns(5)
 columns[0].metric("Total inquiries", len(rows))
@@ -64,11 +64,13 @@ visible = [row for row in rows if all(value == "All" or row[field] == value for 
 if not visible:
     st.info("No inquiries match these filters.")
 else:
-    st.dataframe([{field: row[field] for field in ("id", "customer_name", "status", "category", "priority", "summary")}
+    st.dataframe([{field: row[field] for field in ("id", "customer_name", "customer_email", "status", "category", "priority", "summary")}
                   for row in visible], hide_index=True, width="stretch")
     selected = st.selectbox("Open inquiry", [row["id"] for row in visible], key=f"ticket_{offline}")
     ticket = next(row for row in visible if row["id"] == selected)
     st.subheader(f"{selected} · {ticket['customer_name']}")
+    if ticket.get("customer_email"):
+        st.caption(f"📧 {ticket['customer_email']}")
     st.text(ticket["message"])
     if ticket["summary"]:
         st.caption("Suggested analysis — review against the original inquiry")
@@ -77,13 +79,15 @@ else:
         with st.expander("Original generated draft"):
             st.text(ticket["draft_reply"])
         with st.form(f"review_{offline}_{selected}"):
+            if not offline:
+                st.caption("Approval sends this reviewed response to the customer's email when Gmail is configured.")
             reply = st.text_area("Review and edit response", value=ticket["draft_reply"],
                                  height=180, max_chars=1200)
             submitted = st.form_submit_button("Approve reviewed reply", disabled=read_only())
         if submitted:
             try:
-                approve_ticket(repository, selected, reply)
-                st.session_state["notice"] = f"Approved {selected}. The response has been saved."
+                notice = approve_ticket(repository, selected, reply, send_email=not offline)
+                st.session_state["notice"] = notice
                 st.rerun()
             except Exception as exc:
                 display_error(exc)
@@ -91,6 +95,22 @@ else:
         st.success("Reviewed and approved")
         st.text(ticket["final_reply"])
         st.caption(f"Reviewed at {ticket['reviewed_at']} (UTC)")
+        if ticket["email_status"] == "SENT":
+            st.success(f"Email accepted by Gmail at {ticket['emailed_at']} (UTC).")
+        elif offline or ticket["email_status"] == "DEMO":
+            st.info("Offline demo: no email sent.")
+        else:
+            st.warning(ticket["error_message"] or "Approved response has no confirmed email send recorded.")
+            uncertain = ticket["email_status"] in ("SENDING", "UNKNOWN", "")
+            confirmed = False
+            if uncertain:
+                confirmed = st.checkbox("I checked Gmail Sent and want to retry; this may send a duplicate", key=f"email_retry_{selected}")
+            if st.button("Send approved email", disabled=read_only() or (uncertain and not confirmed)):
+                try:
+                    st.session_state["notice"] = send_approved_email(repository, selected, confirm_uncertain=confirmed)
+                    st.rerun()
+                except Exception as exc:
+                    display_error(exc)
     elif ticket["status"] == "ERROR":
         st.error(ticket["error_message"])
         confirmed = st.checkbox("I have addressed the issue and want to reset this ticket", key=f"retry_{offline}_{selected}")

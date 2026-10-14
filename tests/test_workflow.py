@@ -113,12 +113,12 @@ def test_sheets_pads_empty_cells_and_updates_actual_row_by_id(repository):
     service = MagicMock()
     values = service.spreadsheets.return_value.values.return_value
     rows = repository.load()
-    cells = [[row[field] for field in FIELDS[:5]] for row in rows]
+    cells = [[row[field] for field in FIELDS[:6]] for row in rows]
     values.get.return_value.execute.return_value = {"values": [FIELDS, cells[1], [], cells[0]]}
     sheet = SheetsRepository(service, "test-sheet")
     assert sheet.load()[1]["draft_reply"] == ""
     sheet.update("T001", {**analysis("").model_dump(), "status": "DRAFTED"}, expected_status="NEW")
     arguments = values.update.call_args.kwargs
-    assert arguments["range"] == "Inquiries!A4:L4"
+    assert arguments["range"] == "Inquiries!A4:O4"
     assert arguments["valueInputOption"] == "RAW"
     assert arguments["body"]["values"][0][0] == "T001"

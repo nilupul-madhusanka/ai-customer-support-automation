@@ -1,6 +1,6 @@
 import os
 
-from models.ticket import FIELDS, validate_rows
+from models.ticket import FIELDS, LEGACY_FIELDS, validate_rows
 from services.config import ConfigurationError, project_path
 from services.storage import apply_changes
 
@@ -28,9 +28,20 @@ class SheetsRepository:
         self.values = service.spreadsheets().values()
 
     def _read(self):
-        values = self.values.get(spreadsheetId=self.sheet_id, range="Inquiries!A1:M").execute().get("values", [])
-        if not values or values[0] != FIELDS:
-            raise ValueError("Sheet headers must match the expected 12 columns in order")
+        values = self.values.get(spreadsheetId=self.sheet_id, range="Inquiries!A1:P").execute().get("values", [])
+        if not values or values[0] not in (FIELDS, LEGACY_FIELDS):
+            headers = values[0] if values else []
+            mismatch = next((index for index, field in enumerate(FIELDS)
+                             if index >= len(headers) or headers[index] != field), len(FIELDS))
+            if mismatch < len(FIELDS):
+                column = chr(65 + mismatch)
+                detail = f"{column}1 must be '{FIELDS[mismatch]}'."
+                if FIELDS[mismatch] == "customer_email" and headers[mismatch:mismatch + 1] == ["message"]:
+                    detail += " The customer_email column is missing before message; preserve existing data when inserting it."
+            else:
+                detail = "Remove unexpected headers after O1."
+            raise ValueError(f"Sheet headers must match the expected 15 columns in order. {detail} See docs/email_setup.md")
+        self.legacy_headers = values[0] == LEGACY_FIELDS
         indexed = []
         for number, cells in enumerate(values[1:], start=2):
             if not cells or all(cell == "" for cell in cells):
@@ -46,10 +57,12 @@ class SheetsRepository:
 
     def update(self, ticket_id, changes, *, expected_status):
         indexed = self._read()
+        if self.legacy_headers:
+            raise ConfigurationError("Add email_status in N1 and emailed_at in O1 of Inquiries before updating tickets. See docs/email_setup.md")
         rows = [row for _, row in indexed]
         apply_changes(rows, ticket_id, changes, expected_status)
         number, row = next((number, row) for number, row in indexed if row["id"] == ticket_id)
         self.values.update(
-            spreadsheetId=self.sheet_id, range=f"Inquiries!A{number}:L{number}",
+            spreadsheetId=self.sheet_id, range=f"Inquiries!A{number}:O{number}",
             valueInputOption="RAW", body={"values": [[row[field] for field in FIELDS]]},
         ).execute()

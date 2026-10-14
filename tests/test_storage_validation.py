@@ -24,8 +24,8 @@ def test_malformed_csv_rows_are_rejected(tmp_path, extra):
     with path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(FIELDS)
-        writer.writerow(["T001", "2026-10-13", "Synthetic", "Hello", "NEW"] +
-                        ([""] * 7 + ["unexpected"] if extra else []))
+        row = ["T001", "2026-10-13", "Synthetic", "customer@example.com", "Hello", "NEW"] + [""] * (len(FIELDS) - 6)
+        writer.writerow(row + ["unexpected"] if extra else row[:-1])
     with pytest.raises(ValueError):
         CsvRepository(path).load()
 

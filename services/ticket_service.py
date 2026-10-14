@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
+import smtplib
 
 from models.ticket import TicketAnalysis
 from services.config import check_writable
 from services.storage import Repository
+from services.email_service import is_configured, send_reply, validate_address
 
 
 @dataclass
@@ -51,7 +53,8 @@ def process_new(repository: Repository, analyzer: Callable[[str], TicketAnalysis
     return result
 
 
-def approve_ticket(repository: Repository, ticket_id: str, reply: str) -> None:
+def approve_ticket(repository: Repository, ticket_id: str, reply: str, *, send_email: bool = True) -> str:
+    """Approve a drafted ticket and attempt to email the response to the customer."""
     check_writable()
     reply = reply.strip()
     if not reply or len(reply) > 1200:
@@ -59,7 +62,62 @@ def approve_ticket(repository: Repository, ticket_id: str, reply: str) -> None:
     repository.update(ticket_id, {
         "final_reply": reply, "status": "APPROVED",
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "email_status": "NOT_SENT" if send_email else "DEMO", "emailed_at": "", "error_message": "",
     }, expected_status="DRAFTED")
+    if not send_email:
+        return f"Approved {ticket_id}. Offline demo: no email sent."
+    return f"Approved {ticket_id}. {send_approved_email(repository, ticket_id)}"
+
+
+def send_approved_email(repository: Repository, ticket_id: str, *, confirm_uncertain: bool = False) -> str:
+    """Send the persisted reviewed response; retries require an explicit user action.
+
+    Requires a single writer. SMTP and storage cannot commit atomically; SENDING
+    survives a crash and prevents an automatic resend of an uncertain delivery.
+    """
+    check_writable()
+    matches = [row for row in repository.load() if row["id"] == ticket_id]
+    if len(matches) != 1:
+        raise ValueError("Ticket ID must exist exactly once")
+    ticket = matches[0]
+    if ticket["status"] != "APPROVED":
+        raise ValueError("Only approved replies can be emailed")
+    status = ticket["email_status"]
+    if status == "DEMO":
+        raise ValueError("Offline demo replies cannot be emailed")
+    if status == "SENT":
+        return "Email already sent; no duplicate sent."
+    if status in ("SENDING", "UNKNOWN", "") and not confirm_uncertain:
+        raise ValueError("Delivery is uncertain. Check Gmail Sent before confirming a retry; a duplicate is possible.")
+    if not ticket["customer_email"].strip():
+        return "Email not sent: no customer email on file."
+    if not is_configured():
+        return "Email not sent: configure Gmail SMTP, then use Send approved email."
+    try:
+        validate_address(ticket["customer_email"])
+    except ValueError:
+        repository.update(ticket_id, {"email_status": "FAILED", "error_message": "Email not sent: invalid customer email."}, expected_status="APPROVED")
+        return "Email not sent: invalid customer email."
+    repository.update(ticket_id, {"email_status": "SENDING", "error_message": ""}, expected_status="APPROVED")
+    try:
+        sent = send_reply(ticket["customer_email"], ticket["customer_name"], ticket_id, ticket["final_reply"])
+    except Exception as exc:
+        definite_failure = isinstance(exc, (ValueError, smtplib.SMTPAuthenticationError,
+                                          smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused,
+                                          smtplib.SMTPDataError, smtplib.SMTPNotSupportedError))
+        status = "FAILED" if definite_failure else "UNKNOWN"
+        detail = f"Email {status.lower()} ({type(exc).__name__}). Check Gmail configuration and Sent mail before retrying."
+        repository.update(ticket_id, {"email_status": status, "error_message": detail}, expected_status="APPROVED")
+        return detail
+    if not sent:
+        repository.update(ticket_id, {"email_status": "NOT_SENT"}, expected_status="APPROVED")
+        return "Email not sent: SMTP is not configured."
+    try:
+        repository.update(ticket_id, {"email_status": "SENT", "emailed_at": datetime.now(timezone.utc).isoformat(),
+                                     "error_message": ""}, expected_status="APPROVED")
+    except Exception:
+        return "Gmail accepted the email, but saving delivery status failed. Check Gmail Sent before retrying."
+    return f"Email accepted by Gmail for {ticket['customer_email']}."
 
 
 def retry_ticket(repository: Repository, ticket_id: str) -> None:

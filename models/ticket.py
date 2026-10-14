@@ -6,9 +6,12 @@ CATEGORIES = ("Billing", "Technical Support", "Sales", "General")
 PRIORITIES = ("Low", "Medium", "High")
 STATUSES = ("NEW", "DRAFTED", "APPROVED", "ERROR")
 FIELDS = [
-    "id", "received_at", "customer_name", "message", "status", "category",
+    "id", "received_at", "customer_name", "customer_email", "message", "status", "category",
     "priority", "summary", "draft_reply", "final_reply", "reviewed_at", "error_message",
+    "email_status", "emailed_at",
 ]
+LEGACY_FIELDS = FIELDS[:-2]
+EMAIL_STATUSES = ("", "NOT_SENT", "SENDING", "SENT", "FAILED", "UNKNOWN", "DEMO")
 
 
 class TicketAnalysis(BaseModel):
@@ -23,7 +26,13 @@ def validate_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     seen = set()
     for row in rows:
         if set(row) != set(FIELDS) or any(not isinstance(v, str) for v in row.values()):
-            raise ValueError("Every ticket must have exactly 12 text fields")
+            raise ValueError(f"Every ticket must have exactly {len(FIELDS)} text fields")
+        if row["email_status"] not in EMAIL_STATUSES:
+            raise ValueError("Invalid email status")
+        if row["email_status"] == "SENT" and not row["emailed_at"]:
+            raise ValueError("Sent emails require a timestamp")
+        if (row["email_status"] in ("SENDING", "SENT", "UNKNOWN") or row["emailed_at"]) and row["status"] != "APPROVED":
+            raise ValueError("Only approved tickets can have email delivery records")
         if not row["id"].strip() or row["id"] != row["id"].strip() or row["id"] in seen:
             raise ValueError("Ticket IDs must be nonempty, unique, and have no outer spaces")
         seen.add(row["id"])
