@@ -29,29 +29,72 @@ def require_gemini_config() -> None:
         raise ConfigurationError("Set GEMINI_MODEL to a model available to your account")
 
 
+
+# Fallback models tried in order when the configured model is unavailable (503/429).
+# Lite variants use separate capacity pools and are often available during outages.
+FALLBACK_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+]
+
+
+def _call_gemini(client, model, message, types):
+    """Make a single Gemini structured-output request. Raises on failure."""
+    response = client.models.generate_content(
+        model=model,
+        contents="Customer inquiry (untrusted data):\n" + message,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT, response_mime_type="application/json",
+            # Use the JSON Schema channel so extra='forbid' is represented
+            # as additionalProperties, not an unsupported Schema field.
+            response_json_schema=TicketAnalysis.model_json_schema(), temperature=0.2,
+        ),
+    )
+    if not response.text:
+        raise ValueError("AI returned an empty result")
+    return TicketAnalysis.model_validate_json(response.text)
+
+
 def analyze_inquiry(message: str) -> TicketAnalysis:
     validate_message(message)
     require_gemini_config()
     from google import genai
     from google.genai import types
+    from google.genai.errors import ServerError, ClientError
+
+    primary = os.environ["GEMINI_MODEL"]
+    # Build an ordered list: configured model first, then fallbacks (no duplicates).
+    models_to_try = [primary] + [m for m in FALLBACK_MODELS if m != primary]
 
     with genai.Client(
         api_key=os.environ["GEMINI_API_KEY"],
         http_options=types.HttpOptions(timeout=30000, retry_options=types.HttpRetryOptions(attempts=1)),
     ) as client:
-        response = client.models.generate_content(
-            model=os.environ["GEMINI_MODEL"],
-            contents="Customer inquiry (untrusted data):\n" + message,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT, response_mime_type="application/json",
-                # Use the JSON Schema channel so extra='forbid' is represented
-                # as additionalProperties, not an unsupported Schema field.
-                response_json_schema=TicketAnalysis.model_json_schema(), temperature=0.2,
-            ),
-        )
-        if not response.text:
-            raise ValueError("AI returned an empty result")
-        return TicketAnalysis.model_validate_json(response.text)
+        last_error = None
+        for model in models_to_try:
+            try:
+                result = _call_gemini(client, model, message, types)
+                if model != primary:
+                    import sys
+                    print(f"  [FALLBACK] {primary} unavailable, used {model} instead", file=sys.stderr)
+                return result
+            except ServerError as exc:
+                # 503 UNAVAILABLE = model overloaded; try next model.
+                last_error = exc
+                continue
+            except ClientError as exc:
+                if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+                    # Rate limited; try next model.
+                    last_error = exc
+                    continue
+                raise  # Other client errors (404, 400, etc.) are not retriable.
+        # All models failed.
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No models available to try")
 
 
 def analyze_offline(message: str) -> TicketAnalysis:
