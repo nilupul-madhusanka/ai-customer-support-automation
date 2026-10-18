@@ -6,6 +6,8 @@ Google Sheets is the only supported inquiry source in this version. Google Forms
 
 ## Workflow
 
+<img width="1672" height="405" alt="Google Workflow Pipeline Diagram" src="https://github.com/user-attachments/assets/d22550d0-33a2-4fcf-ba69-7afb8a453db0" />
+
 Google Form → Apps Script → Google Sheets Inquiries → Gemini analysis → saved draft → human review → approval → Gmail SMTP.
 
 The processor selects NEW inquiries, validates structured AI output, and saves DRAFTED or ERROR status. Repeat runs skip drafted, approved, and failed inquiries. Reviewers can edit replies, approve them, and explicitly retry failed analysis or email delivery. The application does not change customer accounts or resolve requests autonomously.
