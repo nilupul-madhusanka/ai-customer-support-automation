@@ -3,23 +3,10 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from models.ticket import FIELDS, TicketAnalysis
-from services.config import ConfigurationError, ROOT
-from services.storage import CsvRepository
+from models.ticket import FIELDS, TicketAnalysis, validate_rows
+from conftest import analysis
+from services.config import ConfigurationError
 from services.ticket_service import approve_ticket, process_new, retry_ticket
-
-
-@pytest.fixture
-def repository(tmp_path, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "false")
-    repo = CsvRepository(tmp_path / "tickets.csv")
-    repo.write(CsvRepository(ROOT / "data/sample_inquiries.csv").load())
-    return repo
-
-
-def analysis(_message):
-    return TicketAnalysis(category="General", priority="Low", summary="Customer requests assistance.",
-                          draft_reply="Hello, could you please share more details about your request?")
 
 
 def test_batch_persists_and_second_run_never_calls_analyzer(repository):
@@ -78,20 +65,21 @@ def test_duplicate_ids_and_extra_fields_rejected(repository):
     rows = repository.load()
     rows[1]["id"] = rows[0]["id"]
     with pytest.raises(ValueError):
-        repository.write(rows)
+        validate_rows(rows)
     with pytest.raises(ValueError):
         repository.update("T001", {"id": "T999"}, expected_status="NEW")
 
 
 def test_storage_failure_aborts_instead_of_attempting_an_error_write(repository):
     repository.update = MagicMock(side_effect=OSError("disk unavailable"))
-    with pytest.raises(OSError):
-        process_new(repository, analysis)
+    result = process_new(repository, analysis)
+    assert "STORAGE_WRITE_FAILED" in result.stopped_reason
+    assert result.succeeded == 0 and result.skipped == 6
     assert repository.update.call_count == 1
 
 
 def test_readonly_guards_every_business_mutation(repository, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "true")
+    monkeypatch.setenv("READ_ONLY", "true")
     for action in (lambda: process_new(repository, analysis),
                    lambda: approve_ticket(repository, "T001", "Response"),
                    lambda: retry_ticket(repository, "T001")):

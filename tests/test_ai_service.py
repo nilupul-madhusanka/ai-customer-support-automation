@@ -25,7 +25,9 @@ def test_sdk_request_and_response_validation_without_network(monkeypatch):
         client = factory.return_value.__enter__.return_value
         client.models.generate_content.return_value = MagicMock(text='{"category":"Billing","priority":"Low","summary":"Customer needs an invoice.","draft_reply":"Hello, please confirm which billing period you need."}')
         result = analyze_inquiry("I need an invoice")
-        assert result.category == "Billing"
+        assert result.analysis.category == "Billing"
+        assert result.model == "test-model"
+        assert result.attempts == ({"model": "test-model", "outcome": "SUCCESS"},)
         assert client.models.generate_content.call_args.kwargs["model"] == "test-model"
         config = client.models.generate_content.call_args.kwargs["config"]
         assert config.response_schema is None

@@ -1,187 +1,107 @@
-# AI Customer Support Automation Assistant
+# AI Customer Support Automation Agent
 
-A Python application that triages support inquiries and creates response drafts for human review. It uses Gemini structured output, Pydantic validation, CSV storage, a Streamlit dashboard, and an optional Google Sheets adapter. Human approval saves the reviewed response and sends it through Gmail SMTP when configured. Offline demo never sends email. See [email setup](docs/email_setup.md) for Google Form, Apps Script, Sheet headers, and Gmail configuration.
+An online support workflow that reads customer inquiries from Google Sheets, uses Gemini to prepare analysis and reply drafts, and presents them in Streamlit for human review. Approval saves the reviewed response and attempts delivery through Gmail SMTP when configured.
 
-## What is this project for?
+Google Sheets is the only supported inquiry source in this version. Google Forms can feed the Sheet through the included Apps Script. WhatsApp Business API messages and website-integrated customer requests are planned for later updates; their connectors are not implemented yet.
 
-Small businesses often collect support requests in a spreadsheet or file. Someone must read each message, decide how urgent it is, categorize it, and write a reply. This project automates that first pass while keeping final review with a person.
+## Workflow
 
-For example, a customer cannot activate a purchased account and needs it today. The assistant can suggest **Technical Support / High**, summarize the problem, and draft a response asking for details needed to investigate. A reviewer checks the suggestion, edits the wording, and records approval.
+Google Form → Apps Script → Google Sheets Inquiries → Gemini analysis → saved draft → human review → approval → Gmail SMTP.
 
-This is also an internship portfolio project demonstrating Python, API integration, structured AI output, repeatable automation, error handling, and a human review interface. It is an AI-assisted workflow. The application does not change customer accounts or resolve inquiries autonomously.
+The processor selects NEW inquiries, validates structured AI output, and saves DRAFTED or ERROR status. Repeat runs skip drafted, approved, and failed inquiries. Reviewers can edit replies, approve them, and explicitly retry failed analysis or email delivery. The application does not change customer accounts or resolve requests autonomously.
 
-## Workflow and features
+## Setup
 
-Google Form / CSV / Google Sheets → select NEW tickets → Gemini analysis → Pydantic validation → save draft → Streamlit review → save approved response → Gmail SMTP.
-
-The lifecycle is `NEW → DRAFTED → APPROVED`. Failed analyses become `ERROR`. After resolving the cause, a reviewer explicitly resets an ERROR ticket to NEW. Drafted and approved records are skipped on later runs.
-
-- Four suggested categories: Billing, Technical Support, Sales, General.
-- Three suggested priorities: Low, Medium, High.
-- Dashboard counts and filters by status, category, and priority.
-- Original inquiry, summary, generated draft, editable reviewed response, and UTC approval timestamp.
-- CSV or Sheets storage with unique IDs; these sources are not synchronized.
-- Confirmed error reset, read-only preview, and clearly labeled offline fixtures.
-
-**Stack:** Python 3.12, Google Gen AI SDK, Pydantic, Streamlit, Google Sheets API, python-dotenv, pytest.
-
-## Current verified status
-
-Checked against the [project guide](AI_Customer_Support_Automation_Project_Guide.md) on **13 October 2026**:
-
-| Capability | Verification |
-|---|---|
-| CSV batches and repeat runs | Six-ticket offline batch and automated tests pass |
-| Validation, error/reset, edited approval | Tests pass, including final reply and review timestamp |
-| Dashboard process/edit/approve/filter flow | Automated Streamlit interaction test passes |
-| Gemini structured analysis | Prior live synthetic requests returned valid results; current model/account access rechecked |
-| Sheets read/write and retry | Six-row live read, T001 draft write/readback, explicit retry, and processed-ticket skip verified |
-| Dashboard with configured Sheets source | Live counts and review form loaded without changing tickets |
-| Local dashboard server | HTTP 200 health response |
-| Automated checks | **21 tests passed**; installed packages report no dependency conflicts |
-
-The current local configuration uses **Sheets** and `gemini-3.8-flash`. At the last check, T001 was DRAFTED and five tickets were NEW. Statuses change as you use the app. The dashboard starts in **Offline demo** mode; turn it off to view the configured Sheet.
-
-The core MVP works, but the guide's full portfolio checklist is still in progress: screenshots, a demo recording, meaningful feature-level Git history, and GitHub publication remain. A six-ticket *live AI* batch, manual approval against the live Sheet, and classification accuracy evaluation have not been completed in this audit. See the [verification report](docs/project_verification.md).
-
-## Quick start on this computer
-
-The local `.venv` was created using the desktop application's bundled Python 3.12 runtime because the normal Windows Python commands were unavailable. Run from this project folder:
+Use Python 3.12 for the tested environment. Node.js 22 or later is required for the Apps Script checks (not for running the Python application). On Windows:
 
 ```powershell
-.\.venv\Scripts\python.exe main.py --demo
-.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1
-```
-
-The dashboard starts in **Offline demo** mode. Click **Process new inquiries**, open a drafted inquiry, edit its response, and approve it. Offline suggestions are deterministic examples, not AI output. Demo changes persist in `data/demo_tickets.csv`, independently of live records. Repeating the processor skips previously drafted and approved inquiries.
-
-To process NEW tickets in the configured source (currently Sheets), run:
-
-```powershell
-.\.venv\Scripts\python.exe main.py --limit 6
-```
-
-Open [the dashboard](http://127.0.0.1:8501), turn **Offline demo off**, and select a drafted inquiry. Review the original message and analysis, edit the reply, and click **Approve reviewed reply**. This saves `final_reply` and a UTC `reviewed_at` timestamp, then attempts email when Gmail is configured. Delivery status and manual retries appear in the approved-ticket view. Complete [email setup](docs/email_setup.md) first, including the two new Sheet headers.
-
-## Setup on another computer
-
-Install Python 3.12, then:
-
-```powershell
-py -3.12 -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
 Copy-Item .env.example .env
-.\.venv\Scripts\python.exe main.py --demo
+```
+
+Configure `.env` with your Gemini key/model, Google Sheet ID, service account credential file, and optional Gmail SMTP credentials. Keep credentials outside version control.
+
+1. Enable the Google Sheets API and create a service account.
+2. Share the intended spreadsheet with the service account as Editor.
+3. Create an `Inquiries` tab with the following headers in A1 through O1:
+
+```text
+id,received_at,customer_name,customer_email,message,status,category,priority,summary,draft_reply,final_reply,reviewed_at,error_message,email_status,emailed_at
+```
+
+New inquiries need a unique nonblank ID, received time, customer details, message, and `NEW` status. Leave workflow fields blank. An empty tab with the correct headers is valid. For Google Forms intake and email configuration, follow [email setup](docs/email_setup.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.verify_sheets
+.\.venv\Scripts\python.exe main.py --limit 6
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-On macOS/Linux:
+The verification command only reads and validates the Sheet. The processor calls Gemini and saves drafts; it does not send email. Open [the dashboard](http://127.0.0.1:8501) to review and approve replies. Approval attempts email delivery when Gmail is configured.
 
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements-lock.txt
-cp .env.example .env
-.venv/bin/python main.py --demo
-.venv/bin/python -m streamlit run app.py
-```
-
-The macOS/Linux instructions follow the same Python workflow but have not been tested on those systems. Do not overwrite an existing `.env` when repeating setup.
-
-`requirements.txt` specifies supported version ranges; `requirements-lock.txt` captures the environment tested on Windows with Python 3.12. If a platform cannot install the lock, install `requirements.txt` and run the tests before creating a new lock.
-
-## Use Gemini
-
-1. Create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
-2. Copy `.env.example` to `.env` if it does not exist. Put your key in **only** the local `.env`, and choose a model available to your account. `gemini-3.8-flash` was verified with a synthetic inquiry on this account; availability and pricing can change. The guide's original `gemini-2.5-flash` returned a provider error stating that it is unavailable to new users.
-3. Choose `DATA_SOURCE=csv` for file-backed tickets or `DATA_SOURCE=sheets` for your configured Sheet. The current local configuration is Sheets. Run:
-
-```powershell
-.\.venv\Scripts\python.exe main.py --limit 6
-```
-
-In CSV mode, the working file `data/tickets.csv` is initialized from the unchanged six-ticket synthetic sample if missing. In Sheets mode, the processor uses the configured `Inquiries` tab. Disable **Offline demo** in the dashboard to review live results. The system requires a configured key/model before beginning a live batch, limits messages to 6,000 characters, sets a 30-second request timeout, and disables automatic request retries. API charges and quotas depend on your account.
-
-The SDK request follows the [official Google Gen AI Python SDK](https://googleapis.github.io/python-genai/) JSON Schema interface (`response_json_schema`), with strict local Pydantic validation. This avoids sending the unsupported `additional_properties` field through the older response schema channel. Real Gemini calls require credentials and are separate from unit tests.
-
-## Configuration reference
+## Configuration
 
 | Variable | Purpose |
-|---|---|
-| `GEMINI_API_KEY` | Local Gemini key |
-| `GEMINI_MODEL` | Model available to your account |
-| `DATA_SOURCE` | `csv` or `sheets` |
-| `CSV_PATH` | Working CSV path; default `data/tickets.csv` |
-| `GOOGLE_SHEET_ID` | Spreadsheet ID for Sheets mode |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` | Credential JSON path; default `credentials/service-account.json` |
-| `DEMO_MODE` | `true` disables processing, approval, and retry |
-| `SMTP_HOST`, `SMTP_PORT` | Gmail SMTP host and STARTTLS port; smtp.gmail.com / 587 |
-| `SMTP_USER`, `SMTP_PASSWORD` | Sender Gmail address and Google App Password |
-| `SMTP_FROM` | Sender display name and mailbox; defaults to SMTP_USER |
+| --- | --- |
+| `GEMINI_API_KEY` | Gemini API credential |
+| `GEMINI_MODEL` | Optional preferred model; automatically discovered candidates follow it |
+| `GEMINI_AUTO_DISCOVER` | Automatically discover Gemini text-generation models; defaults to `true` |
+| `GEMINI_FALLBACK_MODELS` | Optional preferred fallbacks before discovered models; may be left empty |
+| `GEMINI_MAX_ATTEMPTS` | Maximum model attempts per inquiry, 1–5; default 3 |
+| `GEMINI_TIME_BUDGET_SECONDS` | Request scheduling/timeout budget per inquiry, 1–120 seconds; default 90 |
+| `DATA_SOURCE` | `sheets`; defaults to Sheets when omitted |
+| `GOOGLE_SHEET_ID` | Spreadsheet ID |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | Credential path; defaults to `credentials/service-account.json` |
+| `READ_ONLY` | `true` disables processing, approval, and retry; default `false` |
+| `ANALYSIS_AUDIT_PATH` | Redacted analysis history; defaults to `var/analysis_attempts.jsonl` |
+| `SMTP_HOST`, `SMTP_PORT` | SMTP server; normally `smtp.gmail.com` and `587` |
+| `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Gmail sender and app password; see email setup |
 
-Restart the dashboard after editing `.env`. Environment variables set outside the application take precedence over the file.
+Earlier installations should set `DATA_SOURCE=sheets`, remove `CSV_PATH` and `DEMO_MODE`, and use `READ_ONLY=true` if changes should be disabled. File-backed processing, automatic seed records, simulated AI, and the `--demo` option have been removed. Existing local ticket files and backups are not read, imported, or deleted by the application. Legacy `DEMO` delivery statuses are no longer accepted in Sheets; inspect any such records before using them as live inquiries.
 
-## Google Sheets (optional)
-
-1. Enable the Sheets API in your Google Cloud project.
-2. Create a service account and, if your organization allows it, save its credential JSON as `credentials/service-account.json`.
-3. Create an `Inquiries` tab. Import `data/sample_inquiries.csv` with its exact fifteen headers. For an existing 13-column Sheet, add `email_status` in N1 and `emailed_at` in O1.
-4. Share only this synthetic demo spreadsheet with the service account as Editor.
-5. Set `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_FILE`, and `DATA_SOURCE=sheets` in `.env`.
-6. Run the live processor and review the same data with offline mode disabled.
-
-The adapter validates duplicate IDs and headers, pads omitted trailing cells, finds the current row by ticket ID, and writes with `RAW` input so replies are not interpreted as formulas. It uses only the Sheets scope. CSV and Sheets are separate sources; the application does not synchronize them. On this account, live reads, draft writes, error/reset/retry, and repeat-run protection have been verified against the synthetic demo Sheet.
-
-For a new empty demo Sheet, `python -m scripts.verify_sheets --initialize` guards against overwriting data, initializes the expected tab, and verifies one live draft. This command makes a Gemini call for one NEW ticket and switches local configuration to Sheets after successful verification. Do not use it to seed a Sheet containing unrelated data.
-
-The supplied Sheet is already initialized. Running this tool again can process the next NEW ticket; it is a workflow verification tool, not a read-only connection check. On this computer, invoke it using `.\.venv\Scripts\python.exe -m scripts.verify_sheets --initialize`.
-
-## Retry and read-only preview
-
-Failed requests become `ERROR`; exception types are saved without raw API payloads or customer content. Fix the underlying issue, then reset a single failed ticket:
+## Retry and review
 
 ```powershell
-.\.venv\Scripts\python.exe main.py --retry T001
-# For offline records, add --demo.
+.\.venv\Scripts\python.exe main.py --retry TICKET_ID
 ```
 
-The dashboard provides the same reset with a confirmation checkbox. Resetting does not immediately call the API. Only `ERROR` tickets may be reset, and only `DRAFTED` tickets may be approved. Empty or overlong reviewed responses are rejected.
+This resets an ERROR inquiry to NEW without processing it. In the dashboard, approval preserves the original draft and saves the edited final response with a UTC timestamp. Email failures preserve approval. Uncertain deliveries require checking Gmail Sent and explicit confirmation before retrying, because SMTP and Sheets cannot commit together.
 
-For a fresh offline walkthrough, stop the dashboard and rename `data/demo_tickets.csv` to an unused backup filename. The next `main.py --demo` run recreates six synthetic NEW records without changing the configured live source. Preserve live and approved records when staging demos.
+The dashboard previews the full outgoing email, including its recipient, sender, subject, greeting, and reference. **Approve and send email** appears when recipient and basic SMTP settings are present; **Approve reply** saves approval when sending is not ready. Delivery status and search filters help find unsent or uncertain approvals. Approval, SMTP acceptance, and successful delivery-status persistence are separate outcomes.
 
-Set `DEMO_MODE=true` for a read-only preview that disables processing, approval, and retry in both business services and the dashboard. It still initializes a missing local CSV from synthetic samples. This local application has no user authentication; keep it bound to localhost. A private hosted workflow needs authentication before allowing edits.
+If an approval write loses its response, the service tries to confirm the saved reply. It never sends email on that recovery path. Refresh the Sheet before choosing the next action. If analysis stops partway through a batch, completed drafts stay saved and the UI/CLI reports processed and deferred totals.
 
-## Verification
+Automatic fallback discovers general-purpose Gemini models through the model-list API using your configured key, caches the catalog for five minutes per credential fingerprint, and prefers stable Flash candidates before Pro/preview candidates. Specialized image/audio/live/embedding models are excluded. Preferred models are tried first, then deduplicated discovered candidates, within the total attempt/time budget. The dashboard and CLI show each model attempt. Catalog membership does not guarantee current serving capacity or structured-output compatibility; generation still validates the schema. See Google's [model API](https://ai.google.dev/api/models) and [structured output documentation](https://ai.google.dev/gemini-api/docs/structured-output).
+
+Temporary server failures, per-model timeouts, missing candidates, incompatible fallback requests, and invalid/empty responses in automatic mode can advance to the next candidate. Each request receives a share of the remaining time so later candidates have a chance. Authentication, rate limits, provider retry guidance, and non-timeout connection failures stop the batch and leave unprocessed tickets NEW. Discovery failure can still use explicitly configured models; without any candidate it reports a discovery error. SDK automatic retries are disabled. The budget limits scheduling and request timeouts; it is not a hard wall-clock cancellation guarantee for the synchronous SDK. Set `GEMINI_AUTO_DISCOVER=false` to use only explicitly configured models.
+
+Check model discovery without reading inquiries or generating replies:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.verify_models
+```
+
+Redacted local history records ticket ID, timestamp, correlation ID, model attempts/outcomes, and the successful model. It excludes customer messages, generated replies, credentials, and provider payloads. `GENERATED` records mean analysis succeeded, not that the Sheet write committed. Keep `var/` private, writable, and outside version control. This is diagnostic storage, not an offline inquiry source or a transactional audit/outbox.
+
+## Validation
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m scripts.check_project
+node --test tests/test_apps_script.cjs
 ```
 
-Tests cover persisted batches, skipped repeat runs, failure/retry, review transitions, input/output validation, read-only guards, storage failures, mocked Gemini and Sheets calls, and the dashboard's process/edit/approve/filter flow. No test requires API credentials or contacts customers.
+Tests exercise the Sheets adapter using mocked Google API responses, mocked Gemini output, dashboard interactions, concurrent writers, storage failures, and controlled SMTP behavior. External AI, Sheets, and SMTP clients are blocked by default and must be explicitly mocked. The final suite does not contact live services. The checked-in quality workflow runs Python, intake, syntax/link, and dependency checks. See the current [verification](docs/project_verification.md), [review](docs/project_review_2026-10-15.md), [architecture](docs/architecture.md), and [development status](docs/development_status.md).
 
-The expanded checks also reject malformed CSV rows/headers and missing IDs, and verify that mixed-status batches preserve approved, drafted, and failed tickets.
+## Limits and planned work
 
-## Project structure
+The application enforces one writer per Sheet within the same local project directory using a nonblocking OS lock across threads and processes. A busy action is rejected with refresh/retry guidance. Keep `var/locks` in place while the app runs. This does not coordinate separate checkouts, computers, manual Sheet edits/sorting, or external scripts. Sheets updates replace a whole row and do not provide transactional claims; shared hosting still needs a transactional repository/outbox and authentication.
 
-| Location | Responsibility |
-|---|---|
-| `main.py` | CLI batch processing and explicit retry |
-| `app.py` | Dashboard and human review interface |
-| `models/ticket.py` | Analysis contract, columns, stored-row validation |
-| `services/ai_service.py` | Gemini requests and offline fixtures |
-| `services/ticket_service.py` | Processing, approval, and retry rules |
-| `services/storage.py` | CSV repository and source selection |
-| `services/sheets_service.py` | Google Sheets repository |
-| `services/config.py` | Configuration and read-only guard |
-| `services/email_service.py` | Gmail SMTP with verified STARTTLS |
-| `google_apps_script.js` | Google Form submission intake into Inquiries |
-| `scripts/verify_sheets.py` | Guarded initialization and live workflow verification |
-| `data/sample_inquiries.csv` | Six fictional seed inquiries |
-| `tests/` | Workflow, validation, API, and dashboard checks |
+Stored records enforce reply lengths, timezone-aware review/email timestamps, safe IDs, and status-dependent review/delivery fields. Date-only legacy received dates remain readable; 13-column headers are readable but cannot be written until N/O are added. Blank historical approved email status remains uncertain and requires reconciliation. Malformed records are rejected with a safe Sheet row/field diagnostic; they are never silently rewritten. Check existing historical records before using the stricter validation.
 
-See [architecture](docs/architecture.md), [demo walkthrough](docs/demo_script.md), and [development status](docs/development_status.md). The original project guide remains unchanged.
+Legacy ISO received timestamps without a timezone are interpreted using the spreadsheet's **File → Settings → Time zone**, preserving their local clock time. Reading does not modify source data; a later normal workflow write can save the equivalent value with an explicit offset. Review/email times remain strict. Ambiguous daylight-saving times require an explicit offset.
 
-## Limitations
+AI output requires human review. Messages are limited to 6,000 characters and reviewed replies to 1,200. Provider quotas and API costs apply. The app has no user authentication; keep local access restricted until authentication is added for hosting.
 
-CSV and Sheets assume one writer at a time. Status checks and atomic CSV replacement do not provide concurrent worker locks. Sheets updates replace a whole row. A crash after analysis but before saving can cause another API call on retry. Structured outputs do not guarantee factual correctness, so a reviewer remains responsible for drafts. Classification accuracy and prompt-injection resistance have not been evaluated. Fresh installation on a second computer and deployment have not been verified.
-
-Next steps are screenshots and a demo recording, manual live approval and a six-ticket live batch, accuracy evaluation, and improved error guidance. A database, audit history, authentication, automatic bounded retries, category charts, agent frameworks, and deployment are future extensions.
+Upcoming integrations are WhatsApp Business API intake and website customer requests. Channel-specific replies, authentication, deployment, transactional audit/outbox history, and accuracy evaluation require further work.

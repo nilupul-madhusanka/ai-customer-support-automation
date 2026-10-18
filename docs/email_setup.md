@@ -12,9 +12,13 @@ Keep columns A through M in their existing order. Add **N1 = email_status** and 
 id,received_at,customer_name,customer_email,message,status,category,priority,summary,draft_reply,final_reply,reviewed_at,error_message,email_status,emailed_at
 ```
 
-The app can read the old 13-column sheet, but requires the two new headers before making changes. It never rewrites your live headers automatically. Existing CSV files with the 13-column header gain the new fields on their next successful write. Keep one application writer active at a time.
+The app can read the old 13-column sheet, but requires the two new headers before making changes. It never rewrites your live headers automatically. Review and email timestamps must be ISO timestamps with a timezone (for example `2026-10-18T10:30:00Z`); approved replies must contain 1–1200 characters. Legacy date-only received dates remain readable. Correct invalid historical rows manually; do not fill a missing email status with SENT without reconciling delivery.
+
+One writer is enforced across threads/processes in the same project directory. Other installations and manual Sheet edits are outside that lock. Do not sort, delete, or edit source rows while Python is writing.
 
 ## 2. Update Apps Script
+
+Legacy ISO received timestamps without an offset, such as `2026-10-13T09:00:00`, are interpreted using the spreadsheet timezone from **File → Settings**. Reading does not change the Sheet. A later normal workflow update may save the equivalent timestamp with an explicit offset. Review/email timestamps still require explicit timezones. Locale-specific text dates remain invalid; use ISO text rather than guessing day/month order.
 
 Paste the entire `google_apps_script.js` file from the project into **Extensions → Apps Script**, replacing the previous intake code, and save it. Select **setupFormIntake** from the function dropdown, click **Run**, and authorize Google access using the spreadsheet owner's account. This installs the spreadsheet **On form submit** trigger and imports valid missed submissions as NEW. Running setup again does not create another trigger or duplicate tickets imported by this script. It only manages onFormSubmit triggers owned by the account running setup; remove any duplicate intake triggers installed by other accounts separately.
 
@@ -36,7 +40,7 @@ Enable 2-Step Verification and create a [Google App Password](https://support.go
 
 ```env
 DATA_SOURCE=sheets
-DEMO_MODE=false
+READ_ONLY=false
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-address@gmail.com
@@ -49,10 +53,10 @@ Replace the sample values. Enter the generated app password without the display 
 ## 4. Check one complete request
 
 1. Submit the form using an email address you control.
-2. Open Streamlit and turn **Offline demo off**.
+2. Open Streamlit; the dashboard connects directly to Google Sheets.
 3. Click **Refresh tickets**, then **Process new inquiries**.
 4. Open the DRAFTED ticket, review and edit the response.
-5. Click **Approve reviewed reply**. This action saves approval and attempts email.
+5. Inspect the **Complete outgoing email preview**, then click **Approve and send email**. If sending is not ready, **Approve reply** saves approval with recovery guidance.
 6. Confirm email_status becomes SENT and emailed_at is filled. Check the receiving inbox and spam folder.
 
 SENT means the SMTP server accepted the message, not that delivery to the inbox is guaranteed. No live customer email has been sent as part of implementing or testing this feature.
@@ -66,10 +70,13 @@ An SMTP failure keeps the ticket APPROVED and preserves its final reply. It does
 - SENT: SMTP acceptance and timestamp recorded; further send actions skip the ticket.
 - FAILED: configuration, recipient, or SMTP rejection prevented acceptance.
 - UNKNOWN: a connection error made acceptance uncertain.
-- DEMO: approved in Offline demo; email is disabled.
 
 For SENDING, UNKNOWN, or old approved tickets with a blank email status, check the sender's Gmail Sent folder first. Confirm the retry checkbox only after checking; resending can create a duplicate. SMTP and Sheets cannot commit atomically, so exactly-once delivery is not guaranteed. No retries run automatically.
 
 If customer_email is missing or malformed, correct the source record before sending. The app treats original customer details as immutable during normal workflow updates.
 
-Offline demo never sends email, even when Gmail is configured. DEMO_MODE=true additionally prevents approvals and retries.
+READ_ONLY=true prevents processing, approvals, and retries.
+
+Approval and delivery are separate results. A failure saving send intent reports **Approval saved** and confirms email was not attempted. If saving FAILED/UNKNOWN/SENT fails, the warning tells you whether SMTP acceptance is known and requires checking Gmail Sent before retrying. If an approval write loses its response, Python tries to read back the exact saved approval and never attempts email on that recovery path.
+
+Delivery recovery guidance is stored on the ticket and recomputed for missing recipient/SMTP settings when reopening it. Use the **Delivery** filter to find unsent or uncertain approvals. The preview and actual sender use the same message builder, so the greeting, signature, subject, and reference are included in review.

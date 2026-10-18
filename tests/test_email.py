@@ -1,23 +1,13 @@
-import csv
 import smtplib
 from unittest.mock import MagicMock
 
 import pytest
 
 from models.ticket import FIELDS, LEGACY_FIELDS
-from services.config import ROOT, ConfigurationError
-from services.storage import CsvRepository
-from services.ai_service import analyze_offline
+from services.config import ConfigurationError
+from conftest import analysis
 from services.ticket_service import approve_ticket, process_new, send_approved_email
 from services.email_service import send_reply
-
-
-@pytest.fixture
-def repo(tmp_path, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "false")
-    repository = CsvRepository(tmp_path / "tickets.csv")
-    repository.write(CsvRepository(ROOT / "data/sample_inquiries.csv").load())
-    return repository
 
 
 @pytest.fixture
@@ -30,7 +20,7 @@ def configured(monkeypatch):
 def test_approval_sends_persisted_edited_reply_once(repo, configured, monkeypatch):
     sender = MagicMock(return_value=True)
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
-    process_new(repo, analyze_offline, limit=1)
+    process_new(repo, analysis, limit=1)
     sender.assert_not_called()
     approve_ticket(repo, "T001", "  Edited final response.  ")
     sender.assert_called_once_with("amal@example.com", "Amal", "T001", "Edited final response.")
@@ -46,8 +36,8 @@ def test_approval_sends_persisted_edited_reply_once(repo, configured, monkeypatc
 def test_unconfigured_approval_can_be_sent_later(repo, monkeypatch):
     sender = MagicMock(return_value=True)
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
-    process_new(repo, analyze_offline, limit=1)
-    assert "configure Gmail" in approve_ticket(repo, "T001", "Reviewed reply.")
+    process_new(repo, analysis, limit=1)
+    assert "configure Gmail" in approve_ticket(repo, "T001", "Reviewed reply.").message
     assert repo.load()[0]["email_status"] == "NOT_SENT"
     sender.assert_not_called()
     monkeypatch.setattr("services.ticket_service.is_configured", lambda: True)
@@ -55,23 +45,12 @@ def test_unconfigured_approval_can_be_sent_later(repo, monkeypatch):
     sender.assert_called_once()
 
 
-def test_demo_never_sends_even_when_configured(repo, configured, monkeypatch):
-    sender = MagicMock()
-    monkeypatch.setattr("services.ticket_service.send_reply", sender)
-    process_new(repo, analyze_offline, limit=1)
-    approve_ticket(repo, "T001", "Demo reply.", send_email=False)
-    assert repo.load()[0]["email_status"] == "DEMO"
-    with pytest.raises(ValueError, match="demo"):
-        send_approved_email(repo, "T001")
-    sender.assert_not_called()
-
-
 @pytest.mark.parametrize("failure,status", [(smtplib.SMTPAuthenticationError(535, b'secret'), "FAILED"),
                                           (TimeoutError("secret customer data"), "UNKNOWN")])
 def test_failure_preserves_approval_and_requires_safe_retry(repo, configured, monkeypatch, failure, status):
     sender = MagicMock(side_effect=failure)
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
-    process_new(repo, analyze_offline, limit=1)
+    process_new(repo, analysis, limit=1)
     approve_ticket(repo, "T001", "Reviewed reply.")
     row = repo.load()[0]
     assert row["status"] == "APPROVED" and row["email_status"] == status
@@ -90,7 +69,7 @@ def test_no_send_before_approval_or_after_failed_save(repo, configured, monkeypa
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
     with pytest.raises(ValueError, match="approved"):
         send_approved_email(repo, "T001")
-    process_new(repo, analyze_offline, limit=1)
+    process_new(repo, analysis, limit=1)
     repo.update = MagicMock(side_effect=OSError("save failed"))
     with pytest.raises(OSError):
         approve_ticket(repo, "T001", "Reviewed reply.")
@@ -100,7 +79,7 @@ def test_no_send_before_approval_or_after_failed_save(repo, configured, monkeypa
 def test_sent_but_tracking_save_failed_is_not_automatically_resent(repo, configured, monkeypatch):
     sender = MagicMock(return_value=True)
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
-    process_new(repo, analyze_offline, limit=1)
+    process_new(repo, analysis, limit=1)
     update = repo.update
 
     def fail_delivery_save(ticket_id, changes, **kwargs):
@@ -109,7 +88,7 @@ def test_sent_but_tracking_save_failed_is_not_automatically_resent(repo, configu
         update(ticket_id, changes, **kwargs)
 
     monkeypatch.setattr(repo, "update", fail_delivery_save)
-    assert "saving delivery status failed" in approve_ticket(repo, "T001", "Reviewed reply.")
+    assert "saving delivery status failed" in approve_ticket(repo, "T001", "Reviewed reply.").message
     assert repo.load()[0]["email_status"] == "SENDING"
     with pytest.raises(ValueError, match="uncertain"):
         send_approved_email(repo, "T001")
@@ -136,19 +115,6 @@ def test_invalid_recipient_never_connects(configured, address):
         send_reply(address, "Customer", "T001", "Reviewed response.")
 
 
-def test_legacy_csv_upgrades_on_write(tmp_path):
-    path = tmp_path / "legacy.csv"
-    sample = CsvRepository(ROOT / "data/sample_inquiries.csv").load()
-    with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=LEGACY_FIELDS)
-        writer.writeheader()
-        writer.writerows([{key: row[key] for key in LEGACY_FIELDS} for row in sample])
-    repo = CsvRepository(path)
-    assert repo.load()[0]["email_status"] == ""
-    repo.write(repo.load())
-    assert path.read_text().splitlines()[0] == ",".join(FIELDS)
-
-
 def test_legacy_sheet_requires_headers_before_any_update(repo):
     from services.sheets_service import SheetsRepository
     service = MagicMock()
@@ -162,10 +128,10 @@ def test_legacy_sheet_requires_headers_before_any_update(repo):
 
 
 def test_readonly_blocks_email_retry(repo, configured, monkeypatch):
-    process_new(repo, analyze_offline, limit=1)
+    process_new(repo, analysis, limit=1)
     monkeypatch.setattr("services.ticket_service.is_configured", lambda: False)
     approve_ticket(repo, "T001", "Reviewed reply.")
-    monkeypatch.setenv("DEMO_MODE", "true")
+    monkeypatch.setenv("READ_ONLY", "true")
     sender = MagicMock(return_value=True)
     monkeypatch.setattr("services.ticket_service.send_reply", sender)
     with pytest.raises(ConfigurationError):

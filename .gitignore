@@ -12,3 +12,4 @@ data/tickets.csv
 data/demo_tickets.csv
 data/*.before-email.bak
 *.tmp
+var/

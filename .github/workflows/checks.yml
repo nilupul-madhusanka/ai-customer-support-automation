@@ -1,0 +1,25 @@
+name: Project checks
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked Python dependencies
+        run: python -m pip install -r requirements-lock.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Python workflow and dashboard tests
+        run: python -m pytest -q
+      - name: Syntax and documentation links
+        run: python -m scripts.check_project
+      - name: Apps Script intake tests
+        run: node --test tests/test_apps_script.cjs
